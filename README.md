@@ -1,6 +1,8 @@
 # Discord Update Reporter
 Reports mod updates to your Discord server via a Webhook Url.
 
+![image](https://github.com/user-attachments/assets/f4767bf6-d82d-4718-9ff6-f2648de78b86)
+
 Generate a Webhook URL in a (text) channel's `Integrations` settings and copy the URL. After launching the server you can edit the config and insert your URL into `DiscordUpdateReporter.cfg.json`! 
 
 ### Support
