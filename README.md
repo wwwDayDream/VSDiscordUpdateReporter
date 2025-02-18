@@ -1,4 +1,4 @@
-# Discord Update Reporter
+# Discord Mod Update Reporter
 Reports mod updates to your Discord server via a Webhook Url by running `/check-mods` in server console/in-game.
 
 ![image](https://github.com/user-attachments/assets/f4767bf6-d82d-4718-9ff6-f2648de78b86)
