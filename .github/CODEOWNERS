@@ -1,0 +1,9 @@
+# Code Owners
+* @wwwDayDream 
+
+# Append new owners here
+
+
+# This should stay
+.github/ @wwwDayDream
+LICENSE @wwwDayDream

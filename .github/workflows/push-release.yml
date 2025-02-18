@@ -1,0 +1,7 @@
+name: "Build or (Pre)Release"
+
+on:
+  workflow_dispatch:
+  pull_request:
+  release:
+    types: [released, prereleased]
