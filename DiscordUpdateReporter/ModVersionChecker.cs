@@ -66,7 +66,9 @@ public class ModVersionChecker : ModSystem
                 return TextCommandResult.Success("Ran the update checker!");
             });
 
-        /* Task.Run(async () => await CheckModsForUpdates(api)).Wait(); */
+#if DEBUG
+        Task.Run(async () => await CheckModsForUpdates(api)).Wait();
+#endif
     }
     
     async Task CheckForModUpdate(List<(Mod modLoaderMod, ExtendedModDbEntry modEntry)> needsUpdates, List<string> notInDb, Mod? modLoaderMod)
@@ -224,7 +226,8 @@ public class ModVersionChecker : ModSystem
                                 (release.ModVersion == latestVer.ModVersion ?
                                     ":small_blue_diamond:" :
                                     ":black_small_square:"))}\t [{release.ModVersion}](https://mods.vintagestory.at/download?fileid={release.FileId}) " +
-                            $"<t:{release.CorrectedCreatedDate.ToUnixTimeSeconds()}:R>\n"),
+                            $"<t:{release.CorrectedCreatedDate.ToUnixTimeSeconds()}:R> " +
+                            $"`{(release.Tags?.Length > 1 ? release.Tags[^1] + " ... " : "")}{(release.Tags?.Length > 0 ? release.Tags[0] : "")}`\n"),
                     Footer = new EmbedFooter
                     {
                         Text = oldVer == null
