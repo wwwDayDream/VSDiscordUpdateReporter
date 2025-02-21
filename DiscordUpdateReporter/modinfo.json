@@ -1,0 +1,14 @@
+{
+  "type": "code",
+  "modid": "discordupdatereporter",
+  "name": "Discord Mod Update Reporter",
+  "authors": [
+    "wwwDayDream"
+  ],
+  "description": "Reports mod updates to your Discord server via a Webhook Url.",
+  "version": "1.0.2",
+  "side": "server",
+  "dependencies": {
+    "game": ""
+  }
+}
