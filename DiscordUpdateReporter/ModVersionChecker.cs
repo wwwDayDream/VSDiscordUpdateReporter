@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -162,8 +163,8 @@ public partial class ModVersionChecker : ModSystem
         }
     }
 
-    private List<(Mod, ExtendedModDbEntry)> cachedModDbReturns = new();
-    async Task<List<(Mod, ExtendedModDbEntry)>> GetAllModsFromDb()
+    private ConcurrentBag<(Mod, ExtendedModDbEntry)> cachedModDbReturns = new();
+    async Task<ConcurrentBag<(Mod, ExtendedModDbEntry)>> GetAllModsFromDb()
     {
         if (cachedModDbReturns.Count != 0) return cachedModDbReturns;
         
