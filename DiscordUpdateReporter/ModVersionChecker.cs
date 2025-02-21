@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using CSharpDiscordWebhook.NET.Discord;
@@ -17,7 +18,7 @@ using Vintagestory.Server;
 
 namespace DiscordUpdateReporter;
 
-public class ModVersionChecker : ModSystem
+public partial class ModVersionChecker : ModSystem
 {
     internal class ModVersionConfig
     {
@@ -30,18 +31,8 @@ public class ModVersionChecker : ModSystem
         public static void SaveInstance() =>
             ServerProgram.server?.api.StoreModConfig(Instance, Filename);
 
-        public string WebhookUrl { get; set; } = "";
-        // public bool AutoDownload { get; set; } = false;
-        // public bool AutoInstall { get; set; } = false;
-        // public bool StopAfterInstall { get; set; } = true;
-        // public bool RemoveOldInstalls { get; set; } = true;
-        // public string[] LockedVersions { get; set; } = Array.Empty<string>(); 
-
-        [JsonIgnore] private DiscordWebhook? _webhook;
-
-        [JsonIgnore]
-        internal DiscordWebhook? Webhook =>
-            _webhook ??= string.IsNullOrWhiteSpace(WebhookUrl) ? null : new DiscordWebhook { Uri = new Uri(WebhookUrl) };
+        public string CheckWebhookUrl { get; set; } = "";
+        public string ListWebhookUrl { get; set; } = "";
     }
     
     private const string Filename = "DiscordUpdateReporter.cfg.json";
@@ -58,55 +49,171 @@ public class ModVersionChecker : ModSystem
         MessageClient.DefaultRequestHeaders.Add("Accept", "application/json");
 
         api.ChatCommands.Create("check-mods")
-            .WithDescription("Runs the Mod Version Discord Reporter")
+            .WithDescription("Runs the Mod Version Discord Reporter using the given, or last given, webhook url")
             .RequiresPrivilege(Privilege.gamemode)
+            .WithArgs(new StringArgParser("webhookUrl", false))
             .HandleWith((args) =>
             {
-                _ = CheckModsForUpdates(api);
+                var webhookUrl = args.Parsers[0].IsMissing ? "" : (args.Parsers[0].GetValue() as string)!;
+                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook()
+                {
+                    Uri = new Uri(!args.Parsers[0].IsMissing ? webhookUrl! : ModVersionConfig.Instance.CheckWebhookUrl)
+                };
+                if (!string.IsNullOrWhiteSpace(webhookUrl))
+                {
+                    ModVersionConfig.Instance.CheckWebhookUrl = webhookUrl;
+                    ModVersionConfig.SaveInstance();
+                }
+                
+                if (webhook == null) 
+                    return TextCommandResult.Error("No webhook provided, error when creating, or no mod version config webhook found!");
+                _ = CheckModsForUpdates(api, webhook);
                 return TextCommandResult.Success("Ran the update checker!");
             });
 
+        api.ChatCommands.Create("list-mods")
+            .WithDescription("Lists the mods using the given, or last given, webhook url.")
+            .RequiresPrivilege(Privilege.gamemode)
+            .WithArgs(new StringArgParser("webhookUrl", false))
+            .HandleWith((args) =>
+            {
+                var webhookUrl = args.Parsers[0].IsMissing ? "" : (args.Parsers[0].GetValue() as string)!;
+                
+                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook()
+                {
+                    Uri = new Uri(!args.Parsers[0].IsMissing ? webhookUrl : ModVersionConfig.Instance.ListWebhookUrl)
+                };
+                if (!string.IsNullOrWhiteSpace(webhookUrl))
+                {
+                    ModVersionConfig.Instance.ListWebhookUrl = webhookUrl;
+                    ModVersionConfig.SaveInstance();
+                }
+                
+                if (webhook == null) 
+                    return TextCommandResult.Error("No webhook provided, error when creating, or no mod version config webhook found!");
+                _ = LogModsTo(webhook);
+                return TextCommandResult.Success("Listed mods to webhook!");
+            });
+
 #if DEBUG
-        Task.Run(async () => await CheckModsForUpdates(api)).Wait();
+        if (string.IsNullOrWhiteSpace(ModVersionConfig.Instance.CheckWebhookUrl)) return;
+        Task.Run(async () => await CheckModsForUpdates(api, new DiscordWebhook()
+        {
+            Uri = new Uri(ModVersionConfig.Instance.CheckWebhookUrl)
+        })).Wait();
 #endif
     }
-    
-    async Task CheckForModUpdate(List<(Mod modLoaderMod, ExtendedModDbEntry modEntry)> needsUpdates, List<string> notInDb, Mod? modLoaderMod)
+
+    async Task LogModsTo(DiscordWebhook webhook)
     {
-        
-        var modLoaderIdAndVer = modLoaderMod!.Info.ModID + '@' + modLoaderMod.Info.Version;
+        var embeds = new List<DiscordEmbed>();
 
-        var response = await MessageClient.PostAsync($"{ServerConfig.ModDbUrl.TrimEnd('/')}/api/mod/{modLoaderMod.Info.ModID}", null);
-        if (!response.IsSuccessStatusCode)
+        foreach (var (modLoaderMod, modEntry) in await GetAllModsFromDb())
         {
-            notInDb.Add(modLoaderIdAndVer);
-            return;
+            var modLink = modEntry.UrlAlias != null
+                ? $"https://mods.vintagestory.at/{modEntry.UrlAlias}"
+                : $"https://mods.vintagestory.at/show/mod/{modEntry.AssetId}";
+            embeds.Add(new DiscordEmbed
+            {
+                Color = new DiscordColor(Color.DeepSkyBlue),
+                Title = modEntry.Name,
+                Url = new Uri(modLink),
+                Description = modLoaderMod.Info.Description,
+                Author = new EmbedAuthor { Name = modEntry.Author },
+                Thumbnail = !string.IsNullOrWhiteSpace(modEntry.LogoFile) ? new EmbedMedia { Url = new Uri(modEntry.LogoFile) } : null,
+                Footer = new EmbedFooter
+                {
+                    Text = $"Downloads: {modEntry.Downloads} | Follows: {modEntry.Follows}"
+                }
+            });
+            if (!string.IsNullOrWhiteSpace(modEntry.HomepageUrl))
+                embeds.Last().Fields.Add(new EmbedField {Inline = true, Name = " ", Value = $"[Homepage]({modEntry.HomepageUrl})"});
+            if (!string.IsNullOrWhiteSpace(modEntry.SourcecodeUrl))
+                embeds.Last().Fields.Add(new EmbedField {Inline = true, Name = " ", Value = $"[Source]({modEntry.SourcecodeUrl})"});
+            if (!string.IsNullOrWhiteSpace(modEntry.IssueTrackerUrl))
+                embeds.Last().Fields.Add(new EmbedField {Inline = true, Name = " ", Value = $"[Issues]({modEntry.IssueTrackerUrl})"});
+            if (!string.IsNullOrWhiteSpace(modEntry.WikiUrl))
+                embeds.Last().Fields.Add(new EmbedField {Inline = true, Name = " ", Value = $"[Wiki]({modEntry.WikiUrl})"});
+            embeds.Last().Fields.Add(new EmbedField {Inline = false, Name = " ", Value = $"Last Modified <t:{modEntry.CorrectedLastModifiedDate.ToUnixTimeSeconds()}:f>"});
+            var versionFileId = modEntry.Releases?
+                .FirstOrDefault(rel => rel.ModVersion == modLoaderMod.Info.Version)?.FileId;
+            var versionStr = $"v{modLoaderMod.Info.Version}";
+            embeds.Last().Fields.Add(new EmbedField {Inline = false, Name = " ", 
+                Value = $"Installed Version " + (versionFileId != null ? $"[{versionStr}](https://mods.vintagestory.at/download?fileid={versionFileId})" : versionStr)});
+
+            await TrySend();
         }
+        await TrySend(false);
 
-        var responseString = await response.Content.ReadAsStringAsync();
-        Console.WriteLine($"Response to request for modid '{modLoaderMod.Info.ModID}': {response.StatusCode}");
-        
+        return;
 
-        ExtendedModDbEntryResponse? modEntry = null;
-        try
+        async Task TrySend(bool checkCount = true)
         {
-            modEntry = JsonConvert.DeserializeObject<ExtendedModDbEntryResponse>(responseString);
-        } catch { /* Ignored */ }
-                
-        if (modEntry?.Mod == null)
-        {
-            notInDb.Add(modLoaderIdAndVer);
-            return;
-        }
-
-        if (modLoaderMod.Info.Version != modEntry.Mod!.Releases!.First().ModVersion)
-        {
-            needsUpdates.Add((modLoaderMod, modEntry.Mod));
-            return;
+            try
+            {
+                if (checkCount && embeds.Count < 10) return;
+                var msg = new DiscordMessage();
+                msg.Embeds.AddRange(embeds);
+                await webhook.SendAsync(msg);
+                embeds.Clear();
+            }
+            catch (Exception ex)
+            {
+                embeds.Clear();
+                Console.WriteLine(ex.Message);
+            }
         }
     }
 
-    async Task CheckModsForUpdates(ICoreAPI Api)
+    private List<(Mod, ExtendedModDbEntry)> cachedModDbReturns = new();
+    async Task<List<(Mod, ExtendedModDbEntry)>> GetAllModsFromDb()
+    {
+        if (cachedModDbReturns.Count != 0) return cachedModDbReturns;
+        
+        List<Task> tasks = new();
+        const int maxTasksAtOnce = 4;
+        var mods = ServerProgram.server.api.ModLoader.Mods.ToList();
+
+        for (var index = 0; index < mods.Count; index++)
+        {
+            var modLoaderMod = mods[index];
+            if (modLoaderMod.Info.ModID is "game" or "survival" or "creative") continue;
+
+            tasks.Add(Task.Run(async () => await getModFromAPI(modLoaderMod)));
+            if (tasks.Count >= maxTasksAtOnce || index == mods.Count - 1)
+            {
+                await Task.WhenAll(tasks);
+                tasks.Clear();
+            }
+        }
+        return cachedModDbReturns;
+
+        async Task getModFromAPI(Mod modLoaderMod)
+        {
+            var response = await MessageClient.PostAsync($"{ServerConfig.ModDbUrl.TrimEnd('/')}/api/mod/{modLoaderMod.Info.ModID}", null);
+            if (!response.IsSuccessStatusCode) return;
+
+            var responseString = await response.Content.ReadAsStringAsync();
+            ServerProgram.server.api.Logger.Debug($"Response to request for modid '{modLoaderMod.Info.ModID}': {response.StatusCode}");
+
+            ExtendedModDbEntryResponse? modEntry = null;
+            try
+            {
+                modEntry = JsonConvert.DeserializeObject<ExtendedModDbEntryResponse>(responseString);
+            }
+            catch (Exception ex)
+            {
+                /* Ignored */
+                ServerProgram.server.api.Logger.Debug(ex.ToString());
+            }
+
+            if (modEntry?.Mod == null) return;
+
+            cachedModDbReturns.Add((modLoaderMod, modEntry.Mod));
+        }
+    }
+    
+    async Task CheckModsForUpdates(ICoreAPI Api, DiscordWebhook webhook)
     {
 #if DEBUG
         try
@@ -117,36 +224,31 @@ public class ModVersionChecker : ModSystem
             Api.Logger.Debug("Beginning search for mods that might need updates!");
 
             var needsUpdates = new List<(Mod modLoaderMod, ExtendedModDbEntry modEntry)>();
-            var notInDb = new List<string>();
-
-            var webhook = ModVersionConfig.Instance.Webhook;
-            if (webhook == null) return;
+            var updatedMods = new List<Mod>();
 
             var timeStart = DateTimeOffset.Now;
 
-            List<Task> tasks = new();
-            var maxTasksAtOnce = 5;
-            var mods = Api.ModLoader.Mods.ToList();
-
-            for (var index = 0; index < mods.Count; index++)
+            var allModsInApi = await GetAllModsFromDb();
+            var notInDb = Api.ModLoader.Mods
+                .Select(mod => $"{mod.Info.ModID}@{mod.Info.Version}").ToList();
+            
+            foreach (var (mod, dbEntry) in allModsInApi)
             {
-                var modLoaderMod = mods[index];
-                tasks.Add(CheckForModUpdate(needsUpdates, notInDb, modLoaderMod));
-                if (tasks.Count >= maxTasksAtOnce || index == mods.Count - 1)
+                notInDb.Remove($"{mod.Info.ModID}@{mod.Info.Version}");
+                if (mod.Info.Version == dbEntry.Releases!
+                        .OrderByDescending(rel => rel.CorrectedCreatedDate).First().ModVersion)
                 {
-                    await Task.WhenAll(tasks);
-                    tasks.Clear();
+                    updatedMods.Add(mod);
+                    continue;
                 }
+                needsUpdates.Add((mod, dbEntry));
             }
+
+            
 
             var duration = DateTimeOffset.Now - timeStart;
             var durationString = $"Checked {Api.ModLoader.Mods.Count() - 3 /*Offset for game, survival, & creative*/} mod(s) in {duration.ToReadableString()}.";
 
-
-            var updatedMods = Api.ModLoader.Mods.Where(mod => !notInDb.Contains($"{mod.Info.ModID}@{mod.Info.Version}") &&
-                                                              !needsUpdates.Any(kv =>
-                                                                  kv.modLoaderMod.Info.ModID == mod.Info.ModID &&
-                                                                  kv.modLoaderMod.Info.Version == mod.Info.Version)).ToList();
             var added = 0;
             var updatedModsStr = "`";
             foreach (var upToDateMod in updatedMods)
@@ -223,9 +325,9 @@ public class ModVersionChecker : ModSystem
                         .Aggregate("", (desc, release) =>
                             desc + $"\t{(release.ModVersion == modLoaderMod.Info.Version ?
                                 ":small_red_triangle_down:" :
-                                (release.ModVersion == latestVer.ModVersion ?
+                                release.ModVersion == latestVer.ModVersion ?
                                     ":small_blue_diamond:" :
-                                    ":black_small_square:"))}\t [{release.ModVersion}](https://mods.vintagestory.at/download?fileid={release.FileId}) " +
+                                    ":black_small_square:")}\t [{release.ModVersion}](https://mods.vintagestory.at/download?fileid={release.FileId}) " +
                             $"<t:{release.CorrectedCreatedDate.ToUnixTimeSeconds()}:R> " +
                             $"`{(release.Tags?.Length > 1 ? release.Tags[^1] + " ... " : "")}{(release.Tags?.Length > 0 ? release.Tags[0] : "")}`\n"),
                     Footer = new EmbedFooter
@@ -258,4 +360,7 @@ public class ModVersionChecker : ModSystem
     {
         DisposalToken.Cancel();
     }
+
+    [GeneratedRegex(@"(\[!\[\]\([\w\d]*\)\])(?:\([\w\d]*\))")]
+    private static partial Regex MyRegex();
 }
