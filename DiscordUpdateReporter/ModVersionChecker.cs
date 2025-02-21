@@ -54,10 +54,9 @@ public partial class ModVersionChecker : ModSystem
             .WithArgs(new StringArgParser("webhookUrl", false))
             .HandleWith((args) =>
             {
-                var webhookUrl = args.Parsers[0].IsMissing ? "" : (args.Parsers[0].GetValue() as string)!;
-                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook()
-                {
-                    Uri = new Uri(!args.Parsers[0].IsMissing ? webhookUrl! : ModVersionConfig.Instance.CheckWebhookUrl)
+                var webhookUrl = args.Parsers[0].IsMissing ? ModVersionConfig.Instance.CheckWebhookUrl : (args.Parsers[0].GetValue() as string)!;
+                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook {
+                    Uri = new Uri(webhookUrl)
                 };
                 if (!string.IsNullOrWhiteSpace(webhookUrl))
                 {
@@ -77,11 +76,9 @@ public partial class ModVersionChecker : ModSystem
             .WithArgs(new StringArgParser("webhookUrl", false))
             .HandleWith((args) =>
             {
-                var webhookUrl = args.Parsers[0].IsMissing ? "" : (args.Parsers[0].GetValue() as string)!;
-                
-                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook()
-                {
-                    Uri = new Uri(!args.Parsers[0].IsMissing ? webhookUrl : ModVersionConfig.Instance.ListWebhookUrl)
+                var webhookUrl = args.Parsers[0].IsMissing ? ModVersionConfig.Instance.ListWebhookUrl : (args.Parsers[0].GetValue() as string)!;
+                var webhook = string.IsNullOrWhiteSpace(webhookUrl) ? null : new DiscordWebhook {
+                    Uri = new Uri(webhookUrl)
                 };
                 if (!string.IsNullOrWhiteSpace(webhookUrl))
                 {
