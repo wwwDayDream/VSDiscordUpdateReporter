@@ -153,6 +153,7 @@ public partial class ModVersionChecker : ModSystem
                 var msg = new DiscordMessage();
                 msg.Embeds.AddRange(embeds);
                 await webhook.SendAsync(msg);
+                await Task.Delay(100);
                 embeds.Clear();
             }
             catch (Exception ex)
